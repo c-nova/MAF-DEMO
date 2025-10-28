@@ -3,6 +3,14 @@ import ReactMarkdown from 'react-markdown';
 import { VisualizationPane } from './components/VisualizationPane';
 import './App.css';
 
+interface Citation {
+  type: 'url' | 'file';
+  text: string;
+  url?: string;
+  title?: string;
+  file_id?: string;
+}
+
 interface VisualizationData {
   nodes: Array<{
     id: string;
@@ -25,8 +33,15 @@ interface VisualizationData {
 }
 
 interface AgentResponse {
+  session_id: string;
+  status: 'pending_approval' | 'approved' | 'max_iterations_reached';
+  stage: 'research' | 'write' | 'review' | 'completed';
+  iteration?: number;
+  max_iterations?: number;
+  message?: string;
   topic: string;
   research: string;
+  research_citations?: Citation[];
   article: string;
   review: string;
   visualization?: VisualizationData;
@@ -37,8 +52,29 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AgentResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState('');
+  const [showFeedback, setShowFeedback] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+  // Citationsをリンク化する処理
+  const linkifyCitations = (text: string, citations?: Citation[]): string => {
+    if (!citations || citations.length === 0) return text;
+    
+    let linkedText = text;
+    citations.forEach(citation => {
+      if (citation.type === 'url' && citation.url) {
+        // 【3:1†source】のような引用テキストをリンクに変換
+        const escapedText = citation.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escapedText, 'g');
+        linkedText = linkedText.replace(
+          regex,
+          `[${citation.text}](${citation.url} "${citation.title || 'Source'}")`
+        );
+      }
+    });
+    return linkedText;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +104,84 @@ function App() {
 
       const data: AgentResponse = await response.json();
       setResult(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '不明なエラーが発生しました');
+      console.error('Error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!result?.session_id) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/agents/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: result.session_id,
+          approved: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'エラーが発生しました');
+      }
+
+      const data: AgentResponse = await response.json();
+      setResult(data);
+      setShowFeedback(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '不明なエラーが発生しました');
+      console.error('Error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReject = () => {
+    setShowFeedback(true);
+  };
+
+  const handleFeedbackSubmit = async () => {
+    if (!result?.session_id) return;
+    if (!feedback.trim()) {
+      setError('フィードバックを入力してください');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/agents/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: result.session_id,
+          approved: false,
+          feedback: feedback.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'エラーが発生しました');
+      }
+
+      const data: AgentResponse = await response.json();
+      setResult(data);
+      setFeedback('');
+      setShowFeedback(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : '不明なエラーが発生しました');
       console.error('Error:', err);
@@ -122,35 +236,157 @@ function App() {
 
           {result && (
             <div className="results">
-              <div className="result-card">
-                <div className="card-header research">
-                  <h2>🔍 Research Agent</h2>
-                  <span className="badge">調査</span>
+              {/* Research Agent - 常に表示 */}
+              {result.research && (
+                <div className="result-card">
+                  <div className="card-header research">
+                    <h2>🔍 Research Agent</h2>
+                    <span className="badge">調査</span>
+                  </div>
+                  <div className="card-content markdown-content">
+                    <ReactMarkdown
+                      components={{
+                        a: (props) => (
+                          <a {...props} target="_blank" rel="noopener noreferrer" />
+                        ),
+                      }}
+                    >
+                      {linkifyCitations(result.research, result.research_citations)}
+                    </ReactMarkdown>
+                    
+                    {/* 引用元リスト表示 */}
+                    {result.research_citations && result.research_citations.length > 0 && (
+                      <div style={{ marginTop: '2rem', padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
+                        <h4 style={{ marginTop: 0, color: '#495057' }}>📚 引用元</h4>
+                        <ul style={{ marginBottom: 0, paddingLeft: '1.5rem' }}>
+                          {result.research_citations.map((citation, idx) => (
+                            <li key={idx} style={{ marginBottom: '0.5rem' }}>
+                              {citation.type === 'url' && citation.url ? (
+                                <a 
+                                  href={citation.url} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#0066cc', textDecoration: 'none' }}
+                                >
+                                  {citation.title || citation.url}
+                                </a>
+                              ) : (
+                                <span>{citation.text}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="card-content markdown-content">
-                  <ReactMarkdown>{result.research}</ReactMarkdown>
-                </div>
-              </div>
+              )}
 
-              <div className="result-card">
-                <div className="card-header writer">
-                  <h2>✍️ Writer Agent</h2>
-                  <span className="badge">執筆</span>
+              {/* Writer Agent - reviewステージ以降で表示 */}
+              {result.article && result.stage !== 'research' && (
+                <div className="result-card">
+                  <div className="card-header writer">
+                    <h2>✍️ Writer Agent</h2>
+                    <span className="badge">執筆</span>
+                  </div>
+                  <div className="card-content markdown-content">
+                    <ReactMarkdown>{result.article}</ReactMarkdown>
+                  </div>
                 </div>
-                <div className="card-content markdown-content">
-                  <ReactMarkdown>{result.article}</ReactMarkdown>
-                </div>
-              </div>
+              )}
 
-              <div className="result-card">
-                <div className="card-header reviewer">
-                  <h2>👁️ Reviewer Agent</h2>
-                  <span className="badge">レビュー</span>
+              {/* Reviewer Agent - reviewステージ以降で表示 */}
+              {result.review && result.stage !== 'research' && (
+                <div className="result-card">
+                  <div className="card-header reviewer">
+                    <h2>👁️ Reviewer Agent</h2>
+                    <span className="badge">レビュー</span>
+                  </div>
+                  <div className="card-content markdown-content">
+                    <ReactMarkdown>{result.review}</ReactMarkdown>
+                  </div>
                 </div>
-                <div className="card-content markdown-content">
-                  <ReactMarkdown>{result.review}</ReactMarkdown>
+              )}
+
+              {/* Human in the Loop承認UI */}
+              {result.status === 'pending_approval' && (
+                <div className="approval-section">
+                  <div className="approval-header">
+                    <h3>✋ Human in the Loop - 承認待ち ({result.stage === 'research' ? 'Research' : 'Review'})</h3>
+                    {result.iteration && result.max_iterations && (
+                      <span className="iteration-badge">
+                        {result.iteration} / {result.max_iterations} 回目
+                      </span>
+                    )}
+                  </div>
+                  <p>
+                    {result.stage === 'research' 
+                      ? 'リサーチ結果を確認してください。問題なければ「承認」、改善が必要な場合は「フィードバック」をクリックしてください。'
+                      : 'レビュー結果を確認してください。問題なければ「承認」、改善が必要な場合は「フィードバック」をクリックしてください。'
+                    }
+                  </p>
+                  
+                  {!showFeedback ? (
+                    <div className="approval-buttons">
+                      <button 
+                        onClick={handleApprove} 
+                        className="approve-button"
+                        disabled={loading}
+                      >
+                        ✅ 承認
+                      </button>
+                      <button 
+                        onClick={handleReject} 
+                        className="reject-button"
+                        disabled={loading}
+                      >
+                        ❌ フィードバック
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="feedback-form">
+                      <textarea
+                        value={feedback}
+                        onChange={(e) => setFeedback(e.target.value)}
+                        placeholder="改善してほしい点を具体的に入力してください..."
+                        className="feedback-input"
+                        rows={4}
+                        disabled={loading}
+                      />
+                      <div className="feedback-buttons">
+                        <button 
+                          onClick={handleFeedbackSubmit} 
+                          className="submit-feedback-button"
+                          disabled={loading || !feedback.trim()}
+                        >
+                          🔄 フィードバックを送信して再実行
+                        </button>
+                        <button 
+                          onClick={() => setShowFeedback(false)} 
+                          className="cancel-feedback-button"
+                          disabled={loading}
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
+
+              {result.status === 'approved' && (
+                <div className="approval-section approved">
+                  <h3>✅ 承認されました！</h3>
+                  <p>{result.message || '処理が完了しました。'}</p>
+                </div>
+              )}
+
+              {result.status === 'max_iterations_reached' && (
+                <div className="approval-section max-iterations">
+                  <h3>⚠️ 最大試行回数に達しました</h3>
+                  <p>{result.message || '最大試行回数に達したため、処理を終了しました。'}</p>
+                </div>
+              )}
             </div>
           )}
         </main>

@@ -7,7 +7,8 @@
 """
 
 import logging
-from typing import Any, Dict, Optional
+import uuid
+from typing import Any, Dict, Optional, List
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential, DefaultAzureCredential
@@ -45,7 +46,16 @@ class MultiAgentSystem:
     1. ResearchAgent: トピックについて調査 (Bing Grounding有効)
     2. WriterAgent: 調査結果を元に文章作成
     3. ReviewerAgent: 作成された文章をレビュー
+    
+    Human in the loop:
+    - Reviewerの結果を承認待ち状態で返す
+    - フィードバックを受けて再実行
+    - 最大10回まで試行可能
     """
+    
+    # クラス変数: セッション管理用ストレージ
+    _sessions: Dict[str, Dict[str, Any]] = {}
+    MAX_ITERATIONS = 10
 
     def __init__(self):
         """エージェントシステムの初期化"""
@@ -54,7 +64,7 @@ class MultiAgentSystem:
         # トレーサーを初期化
         self.tracer = AgentTracer()
     
-    def _run_agent(self, agent_config: dict, user_message: str) -> tuple[str, str]:
+    def _run_agent(self, agent_config: dict, user_message: str) -> tuple[str, str, List[Dict[str, Any]]]:
         """エージェント実行（トレース付き）
         
         Args:
@@ -62,7 +72,7 @@ class MultiAgentSystem:
             user_message: ユーザーメッセージ
             
         Returns:
-            (結果文字列, トレースID)
+            (結果文字列, トレースID, Citations情報リスト)
         """
         agent_name = agent_config.get("name", "UnknownAgent")
         
@@ -89,6 +99,7 @@ class MultiAgentSystem:
         
         # 5. 結果取得
         result = ""
+        citations = []
         status = "failed"
         
         if run.status == "completed":
@@ -97,7 +108,33 @@ class MultiAgentSystem:
             for msg in messages:
                 if msg.role == "assistant":
                     if msg.text_messages and len(msg.text_messages) > 0:
-                        result = msg.text_messages[0].text.value
+                        text_msg = msg.text_messages[0]
+                        result = text_msg.text.value
+                        
+                        # Citations情報を取得
+                        if hasattr(text_msg.text, 'annotations') and text_msg.text.annotations:
+                            for annotation in text_msg.text.annotations:
+                                # ファイル引用をチェック
+                                file_citation = getattr(annotation, 'file_citation', None)
+                                if file_citation is not None:
+                                    citations.append({
+                                        "type": "file",
+                                        "text": annotation.text,
+                                        "file_id": getattr(file_citation, 'file_id', None)
+                                    })
+                                    continue
+                                
+                                # URL引用をチェック（Bing Groundingなど）
+                                url_citation = getattr(annotation, 'url_citation', None)
+                                if url_citation is not None:
+                                    citations.append({
+                                        "type": "url",
+                                        "text": annotation.text,
+                                        "url": getattr(url_citation, 'url', None),
+                                        "title": getattr(url_citation, 'title', None)
+                                    })
+                        
+                        logger.info(f"📎 Found {len(citations)} citations")
                         break
         else:
             # エラーの場合、詳細情報を取得
@@ -121,103 +158,333 @@ class MultiAgentSystem:
                     f"Tool execution: {tool_type}"
                 )
         
-        return result, trace_id
+        return result, trace_id, citations
+    
+    def _create_session(self, topic: str) -> str:
+        """新しいセッションを作成
+        
+        Args:
+            topic: 処理するトピック
+            
+        Returns:
+            セッションID
+        """
+        session_id = str(uuid.uuid4())
+        self._sessions[session_id] = {
+            "topic": topic,
+            "stage": "research",  # research, write, review, completed
+            "iteration": 0,
+            "research_result": "",
+            "research_citations": [],
+            "write_result": "",
+            "review_result": "",
+            "research_feedbacks": [],
+            "review_feedbacks": [],  # Writerは自動実行なのでフィードバックなし
+            "status": "pending_approval",  # pending_approval, approved, max_iterations_reached
+        }
+        logger.info(f"📝 Created new session: {session_id} at stage: research")
+        return session_id
+    
+    def _get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """セッション情報を取得
+        
+        Args:
+            session_id: セッションID
+            
+        Returns:
+            セッション情報（存在しない場合はNone）
+        """
+        return self._sessions.get(session_id)
+    
+    def _update_session(self, session_id: str, **kwargs) -> None:
+        """セッション情報を更新
+        
+        Args:
+            session_id: セッションID
+            **kwargs: 更新する情報
+        """
+        if session_id in self._sessions:
+            self._sessions[session_id].update(kwargs)
+            logger.info(f"📝 Updated session {session_id}: iteration={self._sessions[session_id]['iteration']}")
 
-    async def process(self, topic: str) -> Dict[str, Any]:
+    async def process(self, topic: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         """トピックを処理してマルチエージェントで協調作業
 
         Args:
             topic: 処理するトピック
+            session_id: セッションID（再実行時に指定）
 
         Returns:
-            各エージェントの結果と可視化データを含む辞書
+            各エージェントの結果と可視化データ、セッション情報を含む辞書
         """
-        # トレースセッション開始
-        self.tracer.start_session()
-        
-        if settings.debug:
-            logger.info(f"🔍 Starting multi-agent processing for topic: {topic}")
-
-        # Step 1: ResearchAgentをAPIで新規作成（Bing Grounding有効）
-        if settings.debug:
-            logger.info("📊 Step 1: Research Agent is working...")
-
-        research_agent_config = {
-            "model": settings.model_deployment_name,
-            "name": "ResearchAgent",
-            "instructions": "あなたは優秀なリサーチャーです。ユーザーのトピックについて最新情報をBing検索で調査し、要点をわかりやすくまとめてください。",
-            "tools": [{
-                "type": "bing_grounding",
-                "bing_grounding": {
-                    "search_configurations": [{
-                        "connection_id": f"/subscriptions/{settings.ai_foundry_subscription_id}/resourceGroups/{settings.ai_foundry_resource_group}/providers/Microsoft.CognitiveServices/accounts/imageone-resource/projects/{settings.ai_foundry_project_name}/connections/bingrag"
-                    }]
+        # セッション管理
+        if session_id is None:
+            # 新規セッション - Researchから開始
+            session_id = self._create_session(topic)
+            session = self._get_session(session_id)
+            assert session is not None, "Failed to create session"
+            # トレースセッション開始（新規セッションのみ）
+            self.tracer.start_session()
+        else:
+            # 既存セッション（再実行またはステージ進行）
+            session = self._get_session(session_id)
+            if session is None:
+                logger.error(f"❌ Session not found: {session_id}")
+                return {"error": "Session not found"}
+            
+            # イテレーション回数チェック
+            if session["iteration"] >= self.MAX_ITERATIONS:
+                logger.warning(f"⚠️  Max iterations reached: {session['iteration']}")
+                self._update_session(session_id, status="max_iterations_reached")
+                return {
+                    "session_id": session_id,
+                    "status": "max_iterations_reached",
+                    "stage": session["stage"],
+                    "message": f"最大試行回数（{self.MAX_ITERATIONS}回）に達しました。",
+                    "topic": session["topic"],
+                    "research": session["research_result"],
+                    "article": session["write_result"],
+                    "review": session["review_result"],
+                    "visualization": self.tracer.get_visualization_data(),
                 }
-            }]
-        }
-        research_result, research_trace_id = self._run_agent(
-            agent_config=research_agent_config,
-            user_message=f"以下のトピックについて調査してください: {topic}"
-        )
-
-        if settings.debug:
-            logger.info(f"✅ Research completed: {len(research_result or '')} characters")
-
-        # Step 2: WriterAgentをAPIで新規作成
-        if settings.debug:
-            logger.info("✍️  Step 2: Writer Agent is working...")
-
-        writer_agent_config = {
-            "model": settings.model_deployment_name,
-            "name": "WriterAgent",
-            "instructions": "あなたは優秀なライターです。提供されたリサーチ結果を元に、読みやすく魅力的な記事を執筆してください。見出しや段落を適切に使い、読者にわかりやすい構成を心がけてください。",
-        }
-        write_result, write_trace_id = self._run_agent(
-            agent_config=writer_agent_config,
-            user_message=f"以下のリサーチ結果を元に、魅力的な記事を書いてください:\n\n{research_result}"
-        )
+            
+            # イテレーション回数を増加
+            session["iteration"] += 1
+            self._update_session(session_id, iteration=session["iteration"])
+            # 再実行時はトレースセッションをリセットしない（継続）
         
-        # エージェント間の遷移を記録
-        self.tracer.add_agent_transition(research_trace_id, write_trace_id, "Research -> Writer")
-
         if settings.debug:
-            logger.info(f"✅ Article completed: {len(write_result or '')} characters")
+            logger.info(f"🔍 Starting stage: {session['stage']} for topic: {topic}")
 
-        # Step 3: ReviewerAgentをAPIで新規作成
-        if settings.debug:
-            logger.info("👁️  Step 3: Reviewer Agent is working...")
-
-        reviewer_agent_config = {
-            "model": settings.model_deployment_name,
-            "name": "ReviewerAgent",
-            "instructions": "あなたは経験豊富なエディターです。提供された記事を丁寧にレビューし、内容の正確性、読みやすさ、構成のバランスなどを評価してください。改善提案も含めて具体的なフィードバックを提供してください。",
-        }
-        review_result, review_trace_id = self._run_agent(
-            agent_config=reviewer_agent_config,
-            user_message=f"以下の記事をレビューしてください:\n\n{write_result}"
-        )
+        # ステージごとに処理
+        current_stage = session["stage"]
         
-        # エージェント間の遷移を記録
-        self.tracer.add_agent_transition(write_trace_id, review_trace_id, "Writer -> Reviewer")
+        # === Research Stage ===
+        if current_stage == "research":
+            if settings.debug:
+                logger.info("📊 Step 1: Research Agent is working...")
 
-        if settings.debug:
-            logger.info(f"✅ Review completed: {len(review_result or '')} characters")
-            logger.info("🎉 All agents completed successfully!")
-            logger.info(f"📊 {self.tracer.get_summary()}")
+            # フィードバック履歴を含めたメッセージを構築
+            research_message = f"以下のトピックについて調査してください: {topic}"
+            if session["research_feedbacks"]:
+                feedback_history = "\n\n【過去のフィードバック履歴】\n"
+                for i, fb in enumerate(session["research_feedbacks"], 1):
+                    feedback_history += f"{i}. {fb}\n"
+                research_message += feedback_history
+                research_message += "\n上記のフィードバックを踏まえて、改善した内容で調査してください。"
 
-        return {
-            "topic": topic,
-            "research": research_result or "",
-            "article": write_result or "",
-            "review": review_result or "",
-            "visualization": self.tracer.get_visualization_data(),
-        }
+            research_agent_config = {
+                "model": settings.model_deployment_name,
+                "name": "ResearchAgent",
+                "instructions": "あなたは優秀なリサーチャーです。ユーザーのトピックについて最新情報をBing検索で調査し、要点をわかりやすくまとめてください。",
+                "tools": [{
+                    "type": "bing_grounding",
+                    "bing_grounding": {
+                        "search_configurations": [{
+                            "connection_id": f"/subscriptions/{settings.ai_foundry_subscription_id}/resourceGroups/{settings.ai_foundry_resource_group}/providers/Microsoft.CognitiveServices/accounts/imageone-resource/projects/{settings.ai_foundry_project_name}/connections/bingrag"
+                        }]
+                    }
+                }]
+            }
+            research_result, research_trace_id, research_citations = self._run_agent(
+                agent_config=research_agent_config,
+                user_message=research_message
+            )
 
+            if settings.debug:
+                logger.info(f"✅ Research completed: {len(research_result or '')} characters")
+            
+            # Research結果とCitations情報を保存
+            self._update_session(
+                session_id,
+                research_result=research_result or "",
+                research_citations=research_citations,
+                status="pending_approval",
+                stage="research"
+            )
+
+            return {
+                "session_id": session_id,
+                "status": "pending_approval",
+                "stage": "research",
+                "iteration": session["iteration"] + 1,
+                "max_iterations": self.MAX_ITERATIONS,
+                "topic": topic,
+                "research": research_result or "",
+                "research_citations": research_citations,
+                "article": "",
+                "review": "",
+                "visualization": self.tracer.get_visualization_data(),
+            }
+        
+        # === Write & Review Stage ===
+        elif current_stage in ["write", "review"]:
+            # Writer Agentを実行（承認不要、自動実行）
+            if settings.debug:
+                logger.info("✍️  Step 2: Writer Agent is working...")
+
+            # Review feedbacksを含めたメッセージを構築
+            write_message = f"以下のリサーチ結果を元に、魅力的な記事を書いてください:\n\n{session['research_result']}"
+            if session["review_feedbacks"]:
+                feedback_history = "\n\n【Reviewerからのフィードバック履歴】\n"
+                for i, fb in enumerate(session["review_feedbacks"], 1):
+                    feedback_history += f"{i}. {fb}\n"
+                write_message += feedback_history
+                write_message += "\n上記のフィードバックを踏まえて、改善した記事を書いてください。"
+
+            writer_agent_config = {
+                "model": settings.model_deployment_name,
+                "name": "WriterAgent",
+                "instructions": "あなたは優秀なライターです。提供されたリサーチ結果を元に、読みやすく魅力的な記事を執筆してください。見出しや段落を適切に使い、読者にわかりやすい構成を心がけてください。",
+            }
+            write_result, write_trace_id, _ = self._run_agent(
+                agent_config=writer_agent_config,
+                user_message=write_message
+            )
+            
+            # Research -> Writer の遷移を記録（初回のみ）
+            if current_stage == "write":
+                # Research trace_idは保存されていないので、遷移記録はスキップ
+                pass
+
+            if settings.debug:
+                logger.info(f"✅ Article completed: {len(write_result or '')} characters")
+
+            # Reviewer Agentを実行
+            if settings.debug:
+                logger.info("👁️  Step 3: Reviewer Agent is working...")
+
+            reviewer_agent_config = {
+                "model": settings.model_deployment_name,
+                "name": "ReviewerAgent",
+                "instructions": "あなたは経験豊富なエディターです。提供された記事を丁寧にレビューし、内容の正確性、読みやすさ、構成のバランスなどを評価してください。改善提案も含めて具体的なフィードバックを提供してください。",
+            }
+            review_result, review_trace_id, _ = self._run_agent(
+                agent_config=reviewer_agent_config,
+                user_message=f"以下の記事をレビューしてください:\n\n{write_result}"
+            )
+            
+            # Writer -> Reviewer の遷移を記録
+            self.tracer.add_agent_transition(write_trace_id, review_trace_id, "Writer -> Reviewer")
+
+            if settings.debug:
+                logger.info(f"✅ Review completed: {len(review_result or '')} characters")
+                logger.info(f"🔄 Iteration: {session['iteration'] + 1}/{self.MAX_ITERATIONS}")
+                logger.info("⏸️  Waiting for human approval...")
+                logger.info(f"📊 {self.tracer.get_summary()}")
+            
+            # Write & Review結果を保存
+            self._update_session(
+                session_id,
+                write_result=write_result or "",
+                review_result=review_result or "",
+                status="pending_approval",
+                stage="review"
+            )
+
+            return {
+                "session_id": session_id,
+                "status": "pending_approval",
+                "stage": "review",
+                "iteration": session["iteration"] + 1,
+                "max_iterations": self.MAX_ITERATIONS,
+                "topic": topic,
+                "research": session["research_result"],
+                "article": write_result or "",
+                "review": review_result or "",
+                "visualization": self.tracer.get_visualization_data(),
+            }
+        
+        # 不明なステージ
+        else:
+            logger.error(f"❌ Unknown stage: {current_stage}")
+            return {"error": f"Unknown stage: {current_stage}"}
+    
+    async def handle_feedback(self, session_id: str, approved: bool, feedback: Optional[str] = None) -> Dict[str, Any]:
+        """Human feedbackを処理
+        
+        Args:
+            session_id: セッションID
+            approved: 承認フラグ（True: OK, False: NG）
+            feedback: フィードバックメッセージ（NGの場合）
+            
+        Returns:
+            処理結果（OKの場合は次のステージまたは完了、NGの場合は再実行結果）
+        """
+        session = self._get_session(session_id)
+        if session is None:
+            logger.error(f"❌ Session not found: {session_id}")
+            return {"error": "Session not found"}
+        
+        current_stage = session["stage"]
+        
+        if approved:
+            # 承認された場合
+            if current_stage == "research":
+                # Research承認 → Writeステージへ進む
+                logger.info(f"✅ Research approved! Moving to Write stage...")
+                self._update_session(session_id, stage="write")
+                # Writer & Reviewer を自動実行
+                return await self.process(topic=session["topic"], session_id=session_id)
+                
+            elif current_stage == "review":
+                # Review承認 → 完了
+                logger.info(f"✅ Review approved! Session completed!")
+                self._update_session(session_id, status="approved", stage="completed")
+                return {
+                    "session_id": session_id,
+                    "status": "approved",
+                    "stage": "completed",
+                    "message": "承認されました！すべての処理が完了しました。",
+                    "topic": session["topic"],
+                    "research": session["research_result"],
+                    "article": session["write_result"],
+                    "review": session["review_result"],
+                    "visualization": self.tracer.get_visualization_data(),
+                }
+            else:
+                logger.error(f"❌ Invalid stage for approval: {current_stage}")
+                return {"error": f"Invalid stage: {current_stage}"}
+        else:
+            # フィードバック（NG）の場合
+            if current_stage == "research":
+                # Research NG → Research再実行
+                if feedback:
+                    session["research_feedbacks"].append(feedback)
+                    logger.info(f"📝 Added research feedback: {feedback}")
+                
+                logger.info(f"🔄 Re-running Research with feedback...")
+                # Researchステージのまま再実行
+                return await self.process(topic=session["topic"], session_id=session_id)
+                
+            elif current_stage == "review":
+                # Review NG → Writer & Reviewer再実行
+                if feedback:
+                    session["review_feedbacks"].append(feedback)
+                    logger.info(f"📝 Added review feedback: {feedback}")
+                
+                logger.info(f"🔄 Re-running Writer & Reviewer with feedback...")
+                # Writeステージに戻して再実行（Writer → Reviewerを両方実行）
+                self._update_session(session_id, stage="write")
+                return await self.process(topic=session["topic"], session_id=session_id)
+            else:
+                logger.error(f"❌ Invalid stage for feedback: {current_stage}")
+                return {"error": f"Invalid stage: {current_stage}"}
+
+
+# シングルトンインスタンス保持用
+_multi_agent_system_instance: Optional[MultiAgentSystem] = None
 
 def create_multi_agent_system() -> MultiAgentSystem:
-    """マルチエージェントシステムのインスタンスを作成
+    """マルチエージェントシステムのインスタンスを取得（シングルトン）
 
     Returns:
-        MultiAgentSystemのインスタンス
+        MultiAgentSystemのインスタンス（既存があれば再利用）
     """
-    return MultiAgentSystem()
+    global _multi_agent_system_instance
+    if _multi_agent_system_instance is None:
+        _multi_agent_system_instance = MultiAgentSystem()
+        logger.info("🆕 Created new MultiAgentSystem singleton instance")
+    else:
+        logger.debug("♻️ Reusing existing MultiAgentSystem singleton instance")
+    return _multi_agent_system_instance

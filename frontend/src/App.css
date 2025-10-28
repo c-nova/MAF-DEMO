@@ -367,3 +367,179 @@ body {
     font-size: 1.2rem;
   }
 }
+
+/* Human in the Loop 承認UI */
+.approval-section {
+  margin-top: 2rem;
+  padding: 2rem;
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  border-radius: 12px;
+  border: 2px solid #4a90e2;
+  box-shadow: 0 4px 16px rgba(74, 144, 226, 0.3);
+}
+
+.approval-section.approved {
+  background: linear-gradient(135deg, #0f9b0f 0%, #00c851 100%);
+  border-color: #00c851;
+  box-shadow: 0 4px 16px rgba(0, 200, 81, 0.3);
+}
+
+.approval-section.max-iterations {
+  background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%);
+  border-color: #f44336;
+  box-shadow: 0 4px 16px rgba(244, 67, 54, 0.3);
+}
+
+.approval-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.approval-header h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.iteration-badge {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.approval-section p {
+  margin: 1rem 0;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.6;
+}
+
+.approval-buttons {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.approve-button,
+.reject-button {
+  flex: 1;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.approve-button {
+  background: linear-gradient(135deg, #0f9b0f 0%, #00c851 100%);
+  color: white;
+}
+
+.approve-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0d8a0d 0%, #00b347 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 200, 81, 0.4);
+}
+
+.reject-button {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+  color: white;
+}
+
+.reject-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ee5a6f 0%, #c92a2a 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(238, 90, 111, 0.4);
+}
+
+.approve-button:disabled,
+.reject-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feedback-form {
+  margin-top: 1.5rem;
+}
+
+.feedback-input {
+  width: 100%;
+  padding: 1rem;
+  font-size: 1rem;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  resize: vertical;
+  transition: all 0.3s ease;
+}
+
+.feedback-input:focus {
+  outline: none;
+  border-color: #4a90e2;
+  background: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.2);
+}
+
+.feedback-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.feedback-buttons {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.submit-feedback-button,
+.cancel-feedback-button {
+  padding: 0.8rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.submit-feedback-button {
+  flex: 1;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.submit-feedback-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5568d3 0%, #63408b 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+.submit-feedback-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-feedback-button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.cancel-feedback-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.cancel-feedback-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
