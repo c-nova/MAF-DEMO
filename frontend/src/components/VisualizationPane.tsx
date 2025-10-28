@@ -125,7 +125,7 @@ export function VisualizationPane({ data }: VisualizationPaneProps) {
     return (
       <div className="visualization-pane">
         <div className="visualization-empty">
-          <p>🎨 実行結果がここに可視化されます</p>
+          🎨 実行結果がここに可視化されます
         </div>
       </div>
     );

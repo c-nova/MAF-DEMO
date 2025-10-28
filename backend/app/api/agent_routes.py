@@ -10,9 +10,19 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
 class ProcessTopicRequest(BaseModel):
-    """トピック処理リクエスト"""
+    """トピック処理リクエスト
+
+    Attributes:
+        topic: 処理対象トピック
+        taste: 出力テイスト（広告風/お客様提案資料風/Web記事風/論文風）
+    """
 
     topic: str = Field(..., description="処理するトピック", min_length=1, max_length=500)
+    taste: Optional[str] = Field(
+        "Web記事風",
+        description="文章生成テイスト (広告風 / お客様提案資料風 / Web記事風 / 論文風)",
+        examples=["広告風", "お客様提案資料風", "Web記事風", "論文風"],
+    )
 
 
 class ProcessTopicResponse(BaseModel):
@@ -25,6 +35,7 @@ class ProcessTopicResponse(BaseModel):
     message: Optional[str] = Field(None, description="メッセージ（エラー時等）")
     stage: Optional[str] = Field(None, description="現在のステージ（research/write/review/completed）")
     topic: str = Field(..., description="処理されたトピック")
+    taste: Optional[str] = Field(None, description="採用された文章テイスト")
     research: str = Field(..., description="リサーチ結果")
     research_citations: Optional[list[Dict[str, Any]]] = Field(None, description="リサーチのCitations情報")
     article: str = Field(..., description="作成された記事")
@@ -75,7 +86,7 @@ async def process_topic(request: ProcessTopicRequest) -> ProcessTopicResponse:
         multi_agent = create_multi_agent_system()
 
         # トピックを処理
-        result = await multi_agent.process(request.topic)
+        result = await multi_agent.process(request.topic, taste=request.taste)
 
         return ProcessTopicResponse(**result)
 

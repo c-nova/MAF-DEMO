@@ -28,12 +28,14 @@ body {
   grid-template-columns: 1fr 400px;
   height: 100vh;
   overflow: hidden;
+  align-items: stretch;
+  justify-items: stretch;
 }
 
 .app {
   max-width: none;
   margin: 0;
-  padding: 2rem;
+  padding: 0;
   min-height: 100vh;
   overflow-y: auto;
   display: flex;
@@ -44,6 +46,9 @@ body {
   text-align: center;
   margin-bottom: 3rem;
   padding: 2rem 0;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
@@ -74,8 +79,37 @@ body {
 .input-group {
   display: flex;
   gap: 1rem;
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
+}
+
+.taste-select {
+  padding: 1rem 1.5rem;
+  font-size: 1rem;
+  border: 2px solid rgba(102, 126, 234, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-width: 200px;
+}
+
+.taste-select:hover {
+  border-color: rgba(102, 126, 234, 0.5);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.taste-select:focus {
+  outline: none;
+  border-color: #667eea;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+}
+
+.taste-select option {
+  background: #1a1d35;
+  color: #fff;
 }
 
 .topic-input {

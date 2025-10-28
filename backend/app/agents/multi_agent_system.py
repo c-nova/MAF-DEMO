@@ -19,6 +19,26 @@ from app.agents.visualization import AgentTracer
 # ロガー設定
 logger = logging.getLogger(__name__)
 
+# テイスト設定辞書
+taste_configs: Dict[str, Dict[str, Any]] = {
+    "広告風": {
+        "style": "キャッチーで短いセンテンス。強い動詞と感嘆符を適度に使用。読者の注意を最初の1行で掴み、CTAを含める。",
+        "structure": ["フック", "ベネフィット", "社会的証拠", "CTA"],
+    },
+    "お客様提案資料風": {
+        "style": "丁寧で論理的。ビジネス敬語。箇条書きや番号付きリストを活用。抽象→具体の順序。",
+        "structure": ["課題", "解決策", "導入効果", "次のステップ"],
+    },
+    "Web記事風": {
+        "style": "親しみやすく適度な口語。視認性の高い見出しと短い段落。必要なら箇条書き。",
+        "structure": ["導入", "本論", "詳細セクション", "まとめ"],
+    },
+    "論文風": {
+        "style": "学術的で客観的。専門用語は定義。引用や根拠を明示。過剰な誇張禁止。",
+        "structure": ["要旨", "序論", "方法", "結果", "考察", "結論"],
+    },
+}
+
 
 def _get_azure_credential():
     """Azure認証情報を取得"""
@@ -160,7 +180,7 @@ class MultiAgentSystem:
         
         return result, trace_id, citations
     
-    def _create_session(self, topic: str) -> str:
+    def _create_session(self, topic: str, taste: str) -> str:
         """新しいセッションを作成
         
         Args:
@@ -181,6 +201,7 @@ class MultiAgentSystem:
             "research_feedbacks": [],
             "review_feedbacks": [],  # Writerは自動実行なのでフィードバックなし
             "status": "pending_approval",  # pending_approval, approved, max_iterations_reached
+            "taste": taste,
         }
         logger.info(f"📝 Created new session: {session_id} at stage: research")
         return session_id
@@ -207,7 +228,7 @@ class MultiAgentSystem:
             self._sessions[session_id].update(kwargs)
             logger.info(f"📝 Updated session {session_id}: iteration={self._sessions[session_id]['iteration']}")
 
-    async def process(self, topic: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    async def process(self, topic: str, session_id: Optional[str] = None, taste: Optional[str] = None) -> Dict[str, Any]:
         """トピックを処理してマルチエージェントで協調作業
 
         Args:
@@ -220,7 +241,8 @@ class MultiAgentSystem:
         # セッション管理
         if session_id is None:
             # 新規セッション - Researchから開始
-            session_id = self._create_session(topic)
+            taste_value = taste or "Web記事風"
+            session_id = self._create_session(topic, taste_value)
             session = self._get_session(session_id)
             assert session is not None, "Failed to create session"
             # トレースセッション開始（新規セッションのみ）
@@ -242,6 +264,7 @@ class MultiAgentSystem:
                     "stage": session["stage"],
                     "message": f"最大試行回数（{self.MAX_ITERATIONS}回）に達しました。",
                     "topic": session["topic"],
+                    "taste": session.get("taste"),
                     "research": session["research_result"],
                     "article": session["write_result"],
                     "review": session["review_result"],
@@ -310,6 +333,7 @@ class MultiAgentSystem:
                 "iteration": session["iteration"] + 1,
                 "max_iterations": self.MAX_ITERATIONS,
                 "topic": topic,
+                "taste": session.get("taste"),
                 "research": research_result or "",
                 "research_citations": research_citations,
                 "article": "",
@@ -324,7 +348,26 @@ class MultiAgentSystem:
                 logger.info("✍️  Step 2: Writer Agent is working...")
 
             # Review feedbacksを含めたメッセージを構築
-            write_message = f"以下のリサーチ結果を元に、魅力的な記事を書いてください:\n\n{session['research_result']}"
+            original_research = session['research_result']
+            # 入力サイズが大きすぎる場合はトリミング（簡易トークン対策）
+            MAX_RESEARCH_CHARS = 12000  # 過剰入力による server_error 回避のため暫定値
+            trimmed_research = original_research
+            was_trimmed = False
+            if len(original_research) > MAX_RESEARCH_CHARS:
+                trimmed_research = original_research[:MAX_RESEARCH_CHARS]
+                was_trimmed = True
+                logger.warning(
+                    f"⚠️ Research result too long ({len(original_research)} chars). Trimmed to {MAX_RESEARCH_CHARS}."
+                )
+
+            write_message = (
+                "以下のリサーチ結果を元に、魅力的な記事を書いてください:\n\n"
+                f"{trimmed_research}"
+            )
+            if was_trimmed:
+                write_message += (
+                    "\n\n【注意】入力が長すぎたため先頭部分のみ使用しています。必要な場合は要約強化が必要です。"
+                )
             if session["review_feedbacks"]:
                 feedback_history = "\n\n【Reviewerからのフィードバック履歴】\n"
                 for i, fb in enumerate(session["review_feedbacks"], 1):
@@ -332,10 +375,24 @@ class MultiAgentSystem:
                 write_message += feedback_history
                 write_message += "\n上記のフィードバックを踏まえて、改善した記事を書いてください。"
 
+            # テイスト設定を取得
+            taste_value = session.get("taste", "Web記事風")
+            taste_conf = taste_configs.get(taste_value, taste_configs["Web記事風"])
+            style_desc = taste_conf["style"]
+            structure_desc = " / ".join(taste_conf["structure"])
+
+            writer_instructions = (
+                "あなたは優秀なライターです。指定されたテイストに従って記事を執筆してください。\n"
+                f"[テイスト]: {taste_value}\n"
+                f"[文体ガイド]: {style_desc}\n"
+                f"[推奨構成]: {structure_desc}\n"
+                "出力形式はMarkdown。構成要素は見出し(H2/H3)を使い、不要な前置きは避けてください。"
+            )
+
             writer_agent_config = {
                 "model": settings.model_deployment_name,
                 "name": "WriterAgent",
-                "instructions": "あなたは優秀なライターです。提供されたリサーチ結果を元に、読みやすく魅力的な記事を執筆してください。見出しや段落を適切に使い、読者にわかりやすい構成を心がけてください。",
+                "instructions": writer_instructions,
             }
             write_result, write_trace_id, _ = self._run_agent(
                 agent_config=writer_agent_config,
@@ -389,6 +446,7 @@ class MultiAgentSystem:
                 "iteration": session["iteration"] + 1,
                 "max_iterations": self.MAX_ITERATIONS,
                 "topic": topic,
+                "taste": session.get("taste"),
                 "research": session["research_result"],
                 "article": write_result or "",
                 "review": review_result or "",
@@ -437,6 +495,7 @@ class MultiAgentSystem:
                     "stage": "completed",
                     "message": "承認されました！すべての処理が完了しました。",
                     "topic": session["topic"],
+                    "taste": session.get("taste"),
                     "research": session["research_result"],
                     "article": session["write_result"],
                     "review": session["review_result"],

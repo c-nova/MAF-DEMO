@@ -40,6 +40,7 @@ interface AgentResponse {
   max_iterations?: number;
   message?: string;
   topic: string;
+  taste?: string; // 追加: バックエンドから返却されるテイスト
   research: string;
   research_citations?: Citation[];
   article: string;
@@ -47,8 +48,11 @@ interface AgentResponse {
   visualization?: VisualizationData;
 }
 
+type TasteType = '広告風' | 'お客様提案資料風' | 'Web記事風' | '論文風';
+
 function App() {
   const [topic, setTopic] = useState('');
+  const [taste, setTaste] = useState<TasteType>('Web記事風');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AgentResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +98,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ topic: topic.trim() }),
+        body: JSON.stringify({ topic: topic.trim(), taste }),
       });
 
       if (!response.ok) {
@@ -201,6 +205,17 @@ function App() {
         <main className="main">
           <form onSubmit={handleSubmit} className="input-form">
             <div className="input-group">
+              <select
+                value={taste}
+                onChange={(e) => setTaste(e.target.value as TasteType)}
+                className="taste-select"
+                disabled={loading}
+              >
+                <option value="広告風">📢 広告風</option>
+                <option value="お客様提案資料風">📊 お客様提案資料風</option>
+                <option value="Web記事風">📝 Web記事風</option>
+                <option value="論文風">🎓 論文風</option>
+              </select>
               <input
                 type="text"
                 value={topic}

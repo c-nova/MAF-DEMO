@@ -1,7 +1,11 @@
 .visualization-pane {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 400px;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: 100vh;
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   border-left: 1px solid rgba(255, 255, 255, 0.1);
   overflow: hidden;
