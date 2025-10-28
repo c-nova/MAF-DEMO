@@ -40,6 +40,7 @@ class ProcessTopicResponse(BaseModel):
     research_citations: Optional[list[Dict[str, Any]]] = Field(None, description="リサーチのCitations情報")
     article: str = Field(..., description="作成された記事")
     review: str = Field(..., description="レビュー結果")
+    illustrations: Optional[list[Dict[str, Any]]] = Field(None, description="挿絵情報リスト (prompt/url/alt など)")
     visualization: Dict[str, Any] = Field(..., description="可視化データ")
 
 

@@ -45,6 +45,13 @@ interface AgentResponse {
   research_citations?: Citation[];
   article: string;
   review: string;
+  illustrations?: Array<{
+    index: number;
+    heading: string;
+    prompt: string;
+    url: string;
+    alt?: string;
+  }>;
   visualization?: VisualizationData;
 }
 
@@ -306,6 +313,27 @@ function App() {
                   </div>
                   <div className="card-content markdown-content">
                     <ReactMarkdown>{result.article}</ReactMarkdown>
+                    {result.illustrations && result.illustrations.length > 0 && (
+                      <div className="illustrations">
+                        <h3 style={{marginTop: '2rem'}}>🖼️ 挿絵プレビュー</h3>
+                        <div className="illustrations-grid">
+                          {result.illustrations.map(img => (
+                            <figure key={img.index} className="illustration-item">
+                              <img src={img.url} alt={img.alt || img.heading} />
+                              <figcaption>{img.heading}</figcaption>
+                            </figure>
+                          ))}
+                        </div>
+                        <details style={{marginTop: '1rem'}}>
+                          <summary style={{cursor:'pointer'}}>使用プロンプトを見る</summary>
+                          <ol>
+                            {result.illustrations.map(img => (
+                              <li key={img.index} style={{fontSize:'0.85rem', lineHeight:1.4}}>{img.prompt}</li>
+                            ))}
+                          </ol>
+                        </details>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

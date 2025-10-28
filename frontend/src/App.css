@@ -293,6 +293,50 @@ body {
   color: rgba(255, 255, 255, 0.95);
 }
 
+/* 挿絵ギャラリー */
+.illustrations {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+
+.illustrations-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.illustration-item {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color .2s ease, transform .2s ease;
+}
+
+.illustration-item:hover {
+  border-color: rgba(102,126,234,0.6);
+  transform: translateY(-2px);
+}
+
+.illustration-item img {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #0f172a;
+}
+
+.illustration-item figcaption {
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: rgba(255,255,255,0.8);
+}
+
 .markdown-content p {
   margin: 1rem 0;
   line-height: 1.8;

@@ -8,6 +8,8 @@
 
 import logging
 import uuid
+import re
+import urllib.parse
 from typing import Any, Dict, Optional, List
 
 from azure.ai.projects import AIProjectClient
@@ -179,6 +181,48 @@ class MultiAgentSystem:
                 )
         
         return result, trace_id, citations
+
+    def _generate_illustrations(self, article_markdown: str, taste: str) -> List[Dict[str, Any]]:
+        """記事本文から簡易に挿絵用プロンプトを生成（ダミーURL返却）
+
+        NOTE: 現時点では実際の画像生成API呼び出しは行わず、将来の差し替えを前提に
+        見出し(H2/H3)を抽出 → 先頭3件を題材化 → placehold.co のプレースホルダー画像URLを返す。
+
+        Args:
+            article_markdown: Writer生成Markdown
+            taste: テイスト（プロンプト差別化用）
+        Returns:
+            list[{prompt,url,alt}]
+        """
+        if not article_markdown.strip():
+            return []
+
+        # 見出し抽出 (#, ##, ###)
+        headings = re.findall(r"^#{2,3}\s+(.+)$", article_markdown, flags=re.MULTILINE)
+        if not headings:
+            # 段落先頭数行を fallback として使う
+            lines = [l.strip() for l in article_markdown.splitlines() if l.strip()]
+            headings = lines[:3]
+
+        selected = headings[:3]
+        illustrations: List[Dict[str, Any]] = []
+        for idx, h in enumerate(selected, 1):
+            base_text = h[:60]
+            prompt = (
+                f"Generate an illustrative image for: '{base_text}'. Style hint: {taste}. "
+                "Clean, informative, no text overlay, high contrast."
+            )
+            # ダミーURL生成（将来ここを本物のimage生成に差し替え）
+            label = urllib.parse.quote(base_text[:20]) or f"image{idx}"
+            url = f"https://placehold.co/600x400?text={label}"  # プレースホルダー
+            illustrations.append({
+                "index": idx,
+                "heading": base_text,
+                "prompt": prompt,
+                "url": url,
+                "alt": f"{base_text} の挿絵"
+            })
+        return illustrations
     
     def _create_session(self, topic: str, taste: str) -> str:
         """新しいセッションを作成
@@ -198,6 +242,7 @@ class MultiAgentSystem:
             "research_citations": [],
             "write_result": "",
             "review_result": "",
+            "illustrations": [],  # 挿絵（ダミー生成 or 画像生成エージェント）
             "research_feedbacks": [],
             "review_feedbacks": [],  # Writerは自動実行なのでフィードバックなし
             "status": "pending_approval",  # pending_approval, approved, max_iterations_reached
@@ -268,6 +313,7 @@ class MultiAgentSystem:
                     "research": session["research_result"],
                     "article": session["write_result"],
                     "review": session["review_result"],
+                    "illustrations": session.get("illustrations", []),
                     "visualization": self.tracer.get_visualization_data(),
                 }
             
@@ -338,6 +384,7 @@ class MultiAgentSystem:
                 "research_citations": research_citations,
                 "article": "",
                 "review": "",
+                "illustrations": session.get("illustrations", []),
                 "visualization": self.tracer.get_visualization_data(),
             }
         
@@ -407,6 +454,16 @@ class MultiAgentSystem:
             if settings.debug:
                 logger.info(f"✅ Article completed: {len(write_result or '')} characters")
 
+            # ===== 挿絵生成 (プレースホルダー) =====
+            try:
+                illustrations = self._generate_illustrations(write_result or "", taste_value)
+                session["illustrations"] = illustrations
+                self._update_session(session_id, illustrations=illustrations)
+                if settings.debug:
+                    logger.info(f"🖼️ Generated {len(illustrations)} illustration placeholders")
+            except Exception as illu_err:
+                logger.warning(f"Illustration generation failed: {illu_err}")
+
             # Reviewer Agentを実行
             if settings.debug:
                 logger.info("👁️  Step 3: Reviewer Agent is working...")
@@ -450,6 +507,7 @@ class MultiAgentSystem:
                 "research": session["research_result"],
                 "article": write_result or "",
                 "review": review_result or "",
+                "illustrations": session.get("illustrations", []),
                 "visualization": self.tracer.get_visualization_data(),
             }
         
@@ -499,6 +557,7 @@ class MultiAgentSystem:
                     "research": session["research_result"],
                     "article": session["write_result"],
                     "review": session["review_result"],
+                    "illustrations": session.get("illustrations", []),
                     "visualization": self.tracer.get_visualization_data(),
                 }
             else:
